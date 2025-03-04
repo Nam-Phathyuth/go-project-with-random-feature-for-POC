@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ElasticsearchRequestHistory">
+    <option name="requestHistory">
+      <map>
+        <entry key="dce1db18-04d4-4cb4-9631-d8f82c239458">
+          <value>
+            <list>
+              <HistoryRequest>
+                <option name="body" value="{&#10;  &quot;from&quot; : 0,&#10;  &quot;size&quot; : 50,&#10;  &quot;query&quot; : {&#10;    &quot;match_all&quot; : {}&#10;  }&#10;}" />
+                <option name="path" value="/task-idx/_search" />
+              </HistoryRequest>
+            </list>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>
