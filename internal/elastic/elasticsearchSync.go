@@ -2,7 +2,9 @@ package elastic
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"go-task/internal/model"
 	"log"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 )
 
 const idxName string = "task-idx"
+const deadLetterTableName string = "dead_letter_tasks"
 
 type TaskDoc struct {
 	ID        int64     `json:"id"`
@@ -25,18 +28,37 @@ type TaskDoc struct {
 type ElasticsearchSync struct {
 	esClient *elasticsearch.Client
 	taskChan chan *model.Task
+	db       *sql.DB
 }
 
-func NewElasticsearchSync(esClient *elasticsearch.Client, taskChan chan *model.Task) *ElasticsearchSync {
+func NewElasticsearchSync(esClient *elasticsearch.Client, taskChan chan *model.Task, db *sql.DB) *ElasticsearchSync {
 	es := ElasticsearchSync{
 		esClient: esClient,
 		taskChan: taskChan,
+		db:       db,
 	}
 	go es.startWorker()
+	go es.runReplayDeadLetter()
 	return &es
 }
 
+func (es *ElasticsearchSync) runReplayDeadLetter() {
+	ticker := time.NewTicker(5 * time.Minute)
+	quit := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				es.replayDeadLetter()
+			case <-quit:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+}
 func (es *ElasticsearchSync) startWorker() {
+	const maxRetry = 3
 	for {
 		task, ok := <-es.taskChan
 		if !ok {
@@ -58,7 +80,69 @@ func (es *ElasticsearchSync) startWorker() {
 			es.esClient.Index.WithDocumentID(strconv.FormatInt(task.ID, 10)),
 		)
 		if err != nil {
-			log.Println(err.Error())
+			for i := 0; i < maxRetry; i++ {
+				_, err = es.esClient.Index(
+					idxName,
+					bytes.NewReader(taskJson),
+					es.esClient.Index.WithDocumentID(strconv.FormatInt(task.ID, 10)),
+				)
+				if err == nil {
+					break
+				}
+				log.Printf("Retry %d: %s", i+1, err.Error())
+				time.Sleep(2 * time.Second)
+			}
+			if err != nil {
+				log.Println("Failed to index document after retries:", err.Error())
+				log.Println("sending task to dead letter queue")
+				es.storeDeadLetter(task, err.Error())
+			}
 		}
+	}
+}
+func (es *ElasticsearchSync) storeDeadLetter(task *model.Task, errorMsg string) {
+	query := fmt.Sprintf(`INSERT INTO %s (task_id, payload, error_msg, retry_count) VALUES (?, ?, ?, ?)`, deadLetterTableName)
+	taskJson, _ := json.Marshal(task)
+
+	_, err := es.db.Exec(query, task.ID, string(taskJson), errorMsg, 3)
+	if err != nil {
+		log.Println("Failed to insert into dead letter queue:", err)
+	}
+}
+
+func (es *ElasticsearchSync) replayDeadLetter() {
+	query := fmt.Sprintf("SELECT id, task_id, payload FROM %s", deadLetterTableName)
+	results, err := es.db.Query(query)
+	if err != nil {
+		log.Println("Failed to query dead letter queue:", err)
+		return
+	}
+	defer results.Close()
+
+	for results.Next() {
+		var id int64
+		var taskID int64
+		var payload []byte
+		err = results.Scan(&id, &taskID, &payload)
+		if err != nil {
+			log.Println("Failed to scan dead letter row:", err)
+			continue
+		}
+		task := &model.Task{}
+		err = json.Unmarshal(payload, task)
+		if err != nil {
+			log.Println("Failed to unmarshal task from dead letter queue:", err)
+			continue
+		}
+		task.ID = taskID
+		es.taskChan <- task
+		deleteQuery := fmt.Sprintf("DELETE FROM %s WHERE id = ?", deadLetterTableName)
+		_, err = es.db.Exec(deleteQuery, id)
+		if err != nil {
+			log.Println("Failed to delete from dead letter queue:", err)
+		}
+	}
+	if err = results.Err(); err != nil {
+		log.Println("Failed to iterate over dead letter queue:", err)
 	}
 }

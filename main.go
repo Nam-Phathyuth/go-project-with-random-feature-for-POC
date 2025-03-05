@@ -30,7 +30,7 @@ var (
 )
 
 func init() {
-	taskChannel = make(chan *model.Task)
+	taskChannel = make(chan *model.Task, 200)
 	log.Printf("initializing database")
 	mysqlDb = &db.MysqlDB{}
 	dbInst = mysqlDb.Init()
@@ -42,7 +42,7 @@ func init() {
 	controller = NewController(serviceInst)
 	log.Printf("initializing elasticsearch")
 	esClient = elastic.NewElasticsearch()
-	_ = elastic.NewElasticsearchSync(esClient, taskChannel)
+	_ = elastic.NewElasticsearchSync(esClient, taskChannel, dbInst)
 }
 
 func main() {

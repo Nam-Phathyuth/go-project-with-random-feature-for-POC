@@ -7,3 +7,12 @@ CREATE TABLE tasks (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL DEFAULT NULL
 );
+
+CREATE TABLE dead_letter_tasks (
+    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    task_id     BIGINT NOT NULL,
+    payload     JSON NOT NULL,
+    error_msg   TEXT NOT NULL,
+    retry_count INT DEFAULT 0,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
