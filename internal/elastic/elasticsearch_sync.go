@@ -41,14 +41,15 @@ func NewElasticsearchSync(esClient *elasticsearch.Client, taskChan chan *model.T
 	go es.runReplayDeadLetter()
 	return &es
 }
-
 func (es *ElasticsearchSync) runReplayDeadLetter() {
-	ticker := time.NewTicker(5 * time.Minute)
+	log.Println("starting dead letter replay")
+	ticker := time.NewTicker(30 * time.Second)
 	quit := make(chan struct{})
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
+				log.Println("resynchronise task")
 				es.replayDeadLetter()
 			case <-quit:
 				ticker.Stop()
@@ -58,6 +59,7 @@ func (es *ElasticsearchSync) runReplayDeadLetter() {
 	}()
 }
 func (es *ElasticsearchSync) startWorker() {
+	log.Println("starting elasticsearch sync worker")
 	const maxRetry = 3
 	for {
 		task, ok := <-es.taskChan
@@ -111,13 +113,18 @@ func (es *ElasticsearchSync) storeDeadLetter(task *model.Task, errorMsg string) 
 }
 
 func (es *ElasticsearchSync) replayDeadLetter() {
-	query := fmt.Sprintf("SELECT id, task_id, payload FROM %s", deadLetterTableName)
+	query := fmt.Sprintf("SELECT id, task_id, payload FROM %s LIMIT 100", deadLetterTableName)
 	results, err := es.db.Query(query)
 	if err != nil {
 		log.Println("Failed to query dead letter queue:", err)
 		return
 	}
-	defer results.Close()
+	defer func(results *sql.Rows) {
+		err := results.Close()
+		if err != nil {
+			log.Println("Failed to close dead letter queue:", err)
+		}
+	}(results)
 
 	for results.Next() {
 		var id int64
