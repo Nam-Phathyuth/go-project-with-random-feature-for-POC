@@ -20,7 +20,7 @@ import (
 
 var (
 	mysqlDb     *db.MysqlDB
-	dbInst      *sql.DB // Assuming db.Init() returns *db.DBConnection
+	dbInst      *sql.DB
 	taskChannel chan *model.Task
 	storage     *dao.MysqlStore
 	serviceInst *service.Service
@@ -55,7 +55,7 @@ func main() {
 		}
 	}(dbInst)
 
-	router.Handle("/", controller)
+	router.Handle("/", pkg.HandleError(controller))
 	router.HandleFunc("GET /{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -109,32 +109,16 @@ func (controller *Controller) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	switch r.Method {
 	case http.MethodGet:
 		var tasksRS []*response.TaskResponse
-		tasks, err := controller.service.FindAll()
-		if err != nil {
-			w.Write([]byte(err.Error()))
-			fmt.Errorf(err.Error())
-			return
-		}
-
+		tasks, _ := controller.service.FindAll()
 		for _, t := range tasks {
 			task, err := mapToTaskRes(*t)
 			if err != nil {
-				w.Write([]byte(err.Error()))
-				fmt.Errorf(err.Error())
 				return
 			}
 			tasksRS = append(tasksRS, task)
 		}
-
-		json, err := json.Marshal(tasksRS)
-		if err != nil {
-			w.Write([]byte(err.Error()))
-			fmt.Errorf(err.Error())
-			return
-		}
-
-		w.Header().Set("Content-Type", "Application/jsonData")
-		w.Write([]byte(json))
+		json, _ := json.Marshal(tasksRS)
+		w.Write(json)
 		return
 	case http.MethodPost:
 		var taskReq request.TaskRequest
