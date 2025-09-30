@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 )
@@ -37,3 +38,7 @@ func HandleError(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+var (
+	ErrNotFound = errors.New("not found")
+)

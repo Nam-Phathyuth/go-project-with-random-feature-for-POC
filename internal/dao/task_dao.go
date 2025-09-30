@@ -1,9 +1,11 @@
 package dao
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	db "go-task/internal/db/go-task"
 	"go-task/internal/model"
 	"go-task/pkg"
 	"log"
@@ -24,7 +26,18 @@ func NewMysqlStore(db *sql.DB, taskChan chan *model.Task) *MysqlStore {
 }
 
 func (mysql *MysqlStore) Save(task *model.Task) (*model.Task, error) {
-	query := fmt.Sprintf("INSERT INTO %s (title, content, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", tableName)
+	query := fmt.Sprintf("INSERT INTO %s (title, content, status) VALUES (?, ?, ?)", tableName)
+	sqlc := db.New(mysql.db)
+	_, err := sqlc.SaveTask(
+		context.Background(),
+		db.SaveTaskParams{
+			Title:   task.Title,
+			Content: sql.NullString{String: task.Content},
+			Status:  db.TasksStatus(string(task.Status)),
+		})
+	if err != nil {
+		return nil, err
+	}
 	inserted, err := mysql.db.Exec(query, task.Title, task.Content, task.Status)
 
 	if err != nil {
@@ -36,7 +49,6 @@ func (mysql *MysqlStore) Save(task *model.Task) (*model.Task, error) {
 	}
 	mysql.taskChan <- task
 	return task, nil
-
 }
 
 func (mysql *MysqlStore) FindById(id int64) (*model.Task, error) {
@@ -47,9 +59,9 @@ func (mysql *MysqlStore) FindById(id int64) (*model.Task, error) {
 	err := result.Scan(&task.ID, &task.Title, &task.Content, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.DeletedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, &pkg.TaskError{Message: fmt.Sprintf("Task Not found: %s", err.Error()), Err: err}
+			return nil, fmt.Errorf("task not found", &pkg.ErrNotFound)
 		}
-		return nil, &pkg.TaskError{Message: fmt.Sprintf("Failed to insert task: %s", err.Error()), Err: err}
+		return nil, &pkg.TaskError{Message: fmt.Sprintf("Data Access Error: %s", err.Error()), Err: err}
 	}
 
 	return &task, nil

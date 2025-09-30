@@ -67,7 +67,7 @@ func (service *Service) FindAll() ([]*model.Task, error) {
 	return service.datastore.FindAll()
 }
 
-func (service *Service) FindById(id int64) (*model.Task, error){
+func (service *Service) FindById(id int64) (*model.Task, error) {
 	task, err := service.datastore.FindById(id)
 
 	if err != nil {

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/elastic/go-elasticsearch/v8"
 	"go-task/internal/dao"
@@ -10,10 +12,12 @@ import (
 	"go-task/internal/elastic"
 	"go-task/internal/model"
 	"go-task/internal/service"
+	"go-task/internal/template"
 	"go-task/pkg"
 	"go-task/pkg/request"
 	"go-task/pkg/response"
 	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 )
@@ -27,6 +31,7 @@ var (
 	controller  *Controller
 	esClient    *elasticsearch.Client
 	_           *elastic.ElasticsearchSync
+	router      *http.ServeMux
 )
 
 func init() {
@@ -43,10 +48,77 @@ func init() {
 	log.Printf("initializing elasticsearch")
 	esClient = elastic.NewElasticsearch()
 	_ = elastic.NewElasticsearchSync(esClient, taskChannel, dbInst)
+	router = initRouter()
 }
 
-func main() {
+func renderIndex(service Service) []*model.Task {
+	tasks, _ := serviceInst.FindAll()
+	return tasks
+}
+
+func initRouter() *http.ServeMux {
+	log.Println("init router")
 	router := http.NewServeMux()
+	//router.Handle("/", templ.Handler(template.Index(renderIndex(serviceInst))))
+	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		tasks, _ := serviceInst.FindAll()
+		w.Header().Set("Cache-Control", "no-cache")
+		err := template.Index(tasks).Render(context.Background(), w)
+		if err != nil {
+			return
+		}
+	})
+	router.Handle("GET /{id}", taskHandler(taskByIDHandler))
+	router.HandleFunc("DELETE /{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		slog.Info("deleting task", "id", r.PathValue("id"))
+		dbInst.Exec("DELETE FROM tasks WHERE id = ?", r.PathValue("id"))
+		return
+	})
+	router.HandleFunc("PUT /{id}/{status}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		slog.Info("updating task", "id", r.PathValue("id"), "status", r.PathValue("status"))
+		dbInst.Exec("UPDATE tasks SET status = ? WHERE id = ?", r.PathValue("status"), r.PathValue("id"))
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		task, _ := serviceInst.FindById(id)
+		template.UpdateTask(*task).Render(context.Background(), w)
+	})
+	router.HandleFunc("PUT /{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		slog.Info("updating task", "id", r.PathValue("id"), "title", r.FormValue("title"))
+		dbInst.Exec("UPDATE tasks SET title = ? WHERE id = ?", r.FormValue("title"), r.PathValue("id"))
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		task, _ := serviceInst.FindById(id)
+		template.UpdateTask(*task).Render(context.Background(), w)
+	})
+	return router
+}
+
+type HttpErr struct {
+	Err  error  `json:"error"`
+	Code int    `json:"code"`
+	Msg  string `json:"message"`
+}
+
+func (e HttpErr) Error() string { return e.Msg }
+
+type taskHandler func(w http.ResponseWriter, r *http.Request) error
+
+func (th taskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	err := th(w, r)
+	if err != nil {
+		httpErr := HttpErr{
+			Err:  err,
+			Code: http.StatusInternalServerError,
+			Msg:  "Internal Server Error",
+		}
+		httpErrJson, _ := json.Marshal(httpErr)
+		w.Header().Set("Content-Type", "Application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(httpErrJson)
+	}
+}
+func main() {
 	defer close(taskChannel)
 	defer func(dbInst *sql.DB) {
 		err := dbInst.Close()
@@ -54,37 +126,42 @@ func main() {
 			log.Printf("db conn closed")
 		}
 	}(dbInst)
-
-	router.Handle("/", pkg.HandleError(controller))
-	router.HandleFunc("GET /{id}", func(w http.ResponseWriter, r *http.Request) {
-		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("invalid id"))
-			log.Printf(err.Error())
-			return
-		}
-		task, err := serviceInst.FindById(id)
-		if err != nil {
-			w.Write([]byte(err.Error()))
-			log.Printf(err.Error())
-			return
-		}
-
-		taskRs, err := mapToTaskRes(*task)
-		if err != nil {
-			w.Write([]byte(err.Error()))
-			log.Printf(err.Error())
-			return
-		}
-		jsonData, _ := json.Marshal(taskRs)
-
-		w.Header().Set("Content-Type", "Application/jsonData")
-		w.Write([]byte(jsonData))
-		return
-	})
-
 	log.Fatal(http.ListenAndServe(":7000", router))
+}
+
+func taskByIDHandler(w http.ResponseWriter, r *http.Request) error {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		log.Printf(err.Error())
+		return err
+	}
+	task, err := serviceInst.FindById(id)
+	if err != nil {
+		if errors.Is(err, pkg.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			log.Printf(err.Error())
+			return err
+		}
+		log.Printf(err.Error())
+		return err
+	}
+	taskRs, err := mapToTaskRes(*task)
+	if err != nil {
+		log.Printf(err.Error())
+		return err
+	}
+	jsonData, err := json.Marshal(taskRs)
+	if err != nil {
+		return fmt.Errorf("error serialize task: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "Application/jsonData")
+	_, err = w.Write([]byte(jsonData))
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 type Service interface {
@@ -118,6 +195,7 @@ func (controller *Controller) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			tasksRS = append(tasksRS, task)
 		}
 		json, _ := json.Marshal(tasksRS)
+		w.Header().Set("Content-Type", "Application/json")
 		w.Write(json)
 		return
 	case http.MethodPost:
