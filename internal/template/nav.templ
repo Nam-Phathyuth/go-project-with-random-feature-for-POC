@@ -1,0 +1,46 @@
+package template
+import (
+    "fmt"
+)
+
+templ Nav(active string) {
+
+<head>
+    <title>Tasks</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+    <script src="//unpkg.com/alpinejs" defer></script>
+    <style type="text/tailwindcss">
+      @theme {
+        --color-clifford: #da373d;
+      }
+    </style>
+</head>
+ <nav class="bg-gray-900 text-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center">
+                    <a href="/" class="text-xl font-semibold">MyApp</a>
+                    <div class="hidden md:block ml-10">
+                        <a href="/" class={fmt.Sprintf("px-3 py-2 rounded-md text-sm font-medium %s", activeClass(active, "home"))}>Home</a>
+                        <a href="/about" class={fmt.Sprintf("px-3 py-2 rounded-md text-sm font-medium %s", activeClass(active, "about"))}>About</a>
+                        <a href="/contact" class={fmt.Sprintf("px-3 py-2 rounded-md text-sm font-medium %s", activeClass(active, "contact"))}>Contact</a>
+                    </div>
+                </div>
+
+                <!-- Mobile Menu Button -->
+                <button class="md:hidden" hx-get="/nav-mobile" hx-target="#mobile-nav" hx-swap="innerHTML">
+                    ☰
+                </button>
+            </div>
+        </div>
+
+        <div id="mobile-nav" class="md:hidden"></div>
+    </nav>
+}
+func activeClass(active, name string) string {
+    if active == name {
+        return "bg-gray-700"
+    }
+    return "hover:bg-gray-700"
+}

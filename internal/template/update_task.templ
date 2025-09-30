@@ -1,0 +1,12 @@
+package template
+import (
+    "fmt"
+    "strconv"
+    "go-task/pkg"
+    "go-task/internal/model"
+)
+templ UpdateTask(task model.Task){
+                <td class="px-6 py-4" hx-put={fmt.Sprintf("/%s/%s", strconv.FormatInt(task.ID, 10), func() string { if task.Status == pkg.TODO { return "COMPLETED" } else {return "TODO" }}())} hx-trigger="click" hx-target="this" hx-swap="outerHTML">
+                    { string(task.Status) }
+                </td>
+}
